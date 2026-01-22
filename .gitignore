@@ -54,14 +54,11 @@ venv.bak/
 ehthumbs.db
 Thumbs.db
 
-# Logs
-logs/
-*.log
-
 # Product folders (data files)
 products/*/processing/
 products/*/processed/
 products/*/failed/
+products/*/logs/
 products/*/inbox/*.csv
 
 # Testing

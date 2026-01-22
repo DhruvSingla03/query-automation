@@ -3,7 +3,7 @@ import re
 import logging
 from typing import Dict, List
 from common.basePlugin import BasePlugin
-from common.constants import Operation
+from common.constants import Operation, ProcessStatus
 
 class FastagAcqPlugin(BasePlugin):
     
@@ -61,25 +61,44 @@ class FastagAcqPlugin(BasePlugin):
         
         logging.info(f"Processing row: jira={metadata['jira']}, operation={operation}, override={override}")
         
+        results = {
+            ProcessStatus.INSERTED: [],
+            ProcessStatus.SKIPPED: [],
+            ProcessStatus.UPDATED: []
+        }
+        
         if self.has_table_data(row, 'plaza'):
-            self.process_plaza(row, metadata, override)
+            status = self.process_plaza(row, metadata, override)
+            results[status].append('plaza')
         
         if self.has_table_data(row, 'conc'):
-            self.process_concessionaire(row, metadata, override)
+            status = self.process_concessionaire(row, metadata, override)
+            results[status].append('concessionaire')
         
         if self.has_table_data(row, 'lane'):
-            self.process_lane(row, metadata, override)
+            status = self.process_lane(row, metadata, override)
+            results[status].append('lane')
         
         if self.has_table_data(row, 'fare'):
-            self.process_fare(row, metadata, override)
+            status = self.process_fare(row, metadata, override)
+            results[status].append('fare')
         
         if self.has_table_data(row, 'vmap'):
-            self.process_vehicle_mapping(row, metadata, override)
+            status = self.process_vehicle_mapping(row, metadata, override)
+            results[status].append('vehicle_mapping')
         
         if self.has_table_data(row, 'umap'):
-            self.process_user_mapping(row, metadata, override)
+            status = self.process_user_mapping(row, metadata, override)
+            results[status].append('user_mapping')
+        
+        if results[ProcessStatus.INSERTED]:
+            logging.info(f"Tables inserted: {results[ProcessStatus.INSERTED]}")
+        if results[ProcessStatus.SKIPPED]:
+            logging.warning(f"Tables skipped (already exist): {results[ProcessStatus.SKIPPED]}")
+        if results[ProcessStatus.UPDATED]:
+            logging.info(f"Tables updated: {results[ProcessStatus.UPDATED]}")
     
-    def process_plaza(self, row: Dict, metadata: Dict, override: bool):
+    def process_plaza(self, row: Dict, metadata: Dict, override: bool) -> str:
         data = self.extract_table_data(row, 'plaza')
         data['_table'] = self.TABLE_PLAZA
         
@@ -92,10 +111,12 @@ class FastagAcqPlugin(BasePlugin):
         if operation == Operation.INSERT:
             existing = self.fetch_current_record(self.TABLE_PLAZA, {'plaza_id': plaza_id})
             if existing:
-                raise ValueError(f"Plaza {plaza_id} already exists. Use UPDATE operation.")
+                logging.warning(f"Plaza {plaza_id} already exists, skipping INSERT")
+                return ProcessStatus.SKIPPED
             
             self._insert_plaza(data)
             logging.info(f"Inserted plaza: {plaza_id}")
+            return ProcessStatus.INSERTED
             
         elif operation == Operation.UPDATE:
             current = self.fetch_current_record(self.TABLE_PLAZA, {'plaza_id': plaza_id})
@@ -107,14 +128,15 @@ class FastagAcqPlugin(BasePlugin):
             
             if not changes:
                 logging.info(f"No changes detected for plaza {plaza_id}")
-                return
+                return ProcessStatus.SKIPPED
             
             self.validate_mutability(changes, override)
             
             self._update_plaza(plaza_id, data, changes)
             logging.info(f"Updated plaza: {plaza_id}, fields: {list(changes.keys())}")
+            return ProcessStatus.UPDATED
     
-    def process_concessionaire(self, row: Dict, metadata: Dict, override: bool):
+    def process_concessionaire(self, row: Dict, metadata: Dict, override: bool) -> str:
         data = self.extract_table_data(row, 'conc')
         data['_table'] = self.TABLE_CONCESSIONAIRE
         
@@ -127,10 +149,12 @@ class FastagAcqPlugin(BasePlugin):
         if operation == Operation.INSERT:
             existing = self.fetch_current_record(self.TABLE_CONCESSIONAIRE, {'concessionaire_id': conc_id})
             if existing:
-                raise ValueError(f"Concessionaire {conc_id} already exists. Use UPDATE operation.")
+                logging.warning(f"Concessionaire {conc_id} already exists, skipping INSERT")
+                return ProcessStatus.SKIPPED
             
             self._insert_concessionaire(data)
             logging.info(f"Inserted concessionaire: {conc_id}")
+            return ProcessStatus.INSERTED
             
         elif operation == Operation.UPDATE:
             current = self.fetch_current_record(self.TABLE_CONCESSIONAIRE, {'concessionaire_id': conc_id})
@@ -142,13 +166,14 @@ class FastagAcqPlugin(BasePlugin):
             
             if not changes:
                 logging.info(f"No changes detected for concessionaire {conc_id}")
-                return
+                return ProcessStatus.SKIPPED
             
             self.validate_mutability(changes, override)
             self._update_concessionaire(conc_id, data, changes)
             logging.info(f"Updated concessionaire: {conc_id}, fields: {list(changes.keys())}")
+            return ProcessStatus.UPDATED
     
-    def process_lane(self, row: Dict, metadata: Dict, override: bool):
+    def process_lane(self, row: Dict, metadata: Dict, override: bool) -> str:
         data = self.extract_table_data(row, 'lane')
         data['_table'] = self.TABLE_LANE
         
@@ -162,10 +187,12 @@ class FastagAcqPlugin(BasePlugin):
         if operation == Operation.INSERT:
             existing = self.fetch_current_record(self.TABLE_LANE, {'plaza_id': plaza_id, 'lane_id': lane_id})
             if existing:
-                raise ValueError(f"Lane {plaza_id}/{lane_id} already exists. Use UPDATE operation.")
+                logging.warning(f"Lane {plaza_id}/{lane_id} already exists, skipping INSERT")
+                return ProcessStatus.SKIPPED
             
             self._insert_lane(data)
             logging.info(f"Inserted lane: {plaza_id}/{lane_id}")
+            return ProcessStatus.INSERTED
             
         elif operation == Operation.UPDATE:
             current = self.fetch_current_record(self.TABLE_LANE, {'plaza_id': plaza_id, 'lane_id': lane_id})
@@ -177,13 +204,14 @@ class FastagAcqPlugin(BasePlugin):
             
             if not changes:
                 logging.info(f"No changes detected for lane {plaza_id}/{lane_id}")
-                return
+                return ProcessStatus.SKIPPED
             
             self.validate_mutability(changes, override)
             self._update_lane(plaza_id, lane_id, data, changes)
             logging.info(f"Updated lane: {plaza_id}/{lane_id}, fields: {list(changes.keys())}")
+            return ProcessStatus.UPDATED
     
-    def process_fare(self, row: Dict, metadata: Dict, override: bool):
+    def process_fare(self, row: Dict, metadata: Dict, override: bool) -> str:
         data = self.extract_table_data(row, 'fare')
         data['_table'] = self.TABLE_FARE
         
@@ -196,10 +224,12 @@ class FastagAcqPlugin(BasePlugin):
         if operation == Operation.INSERT:
             existing = self.fetch_current_record(self.TABLE_FARE, {'fare_id': fare_id})
             if existing:
-                raise ValueError(f"Fare {fare_id} already exists. Use UPDATE operation.")
+                logging.warning(f"Fare {fare_id} already exists, skipping INSERT")
+                return ProcessStatus.SKIPPED
             
             self._insert_fare(data)
             logging.info(f"Inserted fare details: {fare_id}")
+            return ProcessStatus.INSERTED
             
         elif operation == Operation.UPDATE:
             current = self.fetch_current_record(self.TABLE_FARE, {'fare_id': fare_id})
@@ -211,18 +241,19 @@ class FastagAcqPlugin(BasePlugin):
             
             if not changes:
                 logging.info(f"No changes detected for fare {fare_id}")
-                return
+                return ProcessStatus.SKIPPED
             
             self.validate_mutability(changes, override)
             self._update_fare(fare_id, data, changes)
-            logging.info(f"Updated fare details: {fare_id}, fields: {list(changes.keys())}")
+            logging.info(f"Updated fare: {fare_id}, fields: {list(changes.keys())}")
+            return ProcessStatus.UPDATED
     
-    def process_vehicle_mapping(self, row: Dict, metadata: Dict, override: bool):
+    def process_vehicle_mapping(self, row: Dict, metadata: Dict, override: bool) -> str:
         data = self.extract_table_data(row, 'vmap')
         data['_table'] = self.TABLE_VEHICLE_MAPPING
         
-        if not data.get('plaza_id'):
-            raise ValueError("vmap.plaza_id is required")
+        if not data.get('plaza_id') or not data.get('mvc_id'):
+            raise ValueError("vmap.plaza_id and vmap.mvc_id are required")
         
         plaza_id = data['plaza_id']
         mvc_id = data['mvc_id']
@@ -231,10 +262,12 @@ class FastagAcqPlugin(BasePlugin):
         if operation == Operation.INSERT:
             existing = self.fetch_current_record(self.TABLE_VEHICLE_MAPPING, {'plaza_id': plaza_id, 'mvc_id': mvc_id})
             if existing:
-                raise ValueError(f"Vehicle mapping {plaza_id}/{mvc_id} already exists. Use UPDATE operation.")
+                logging.warning(f"Vehicle mapping {plaza_id}/{mvc_id} already exists, skipping INSERT")
+                return ProcessStatus.SKIPPED
             
             self._insert_vehicle_mapping(data)
             logging.info(f"Inserted VC mapping for plaza: {plaza_id}")
+            return ProcessStatus.INSERTED
             
         elif operation == Operation.UPDATE:
             current = self.fetch_current_record(self.TABLE_VEHICLE_MAPPING, {'plaza_id': plaza_id, 'mvc_id': mvc_id})
@@ -245,14 +278,15 @@ class FastagAcqPlugin(BasePlugin):
             changes = self.detect_changes(current, data, all_fields)
             
             if not changes:
-                logging.info(f"No changes detected for VC mapping for plaza {plaza_id}")
-                return
+                logging.info(f"No changes detected for vehicle mapping {plaza_id}/{mvc_id}")
+                return ProcessStatus.SKIPPED
             
             self.validate_mutability(changes, override)
-            self._update_vehicle_mapping(plaza_id, data, changes)
-            logging.info(f"Updated VC mapping for plaza: {plaza_id}, fields: {list(changes.keys())}")
+            self._update_vehicle_mapping(plaza_id, mvc_id, data, changes)
+            logging.info(f"Updated vehicle mapping: {plaza_id}/{mvc_id}, fields: {list(changes.keys())}")
+            return ProcessStatus.UPDATED
     
-    def process_user_mapping(self, row: Dict, metadata: Dict, override: bool):
+    def process_user_mapping(self, row: Dict, metadata: Dict, override: bool) -> str:
         data = self.extract_table_data(row, 'umap')
         data['_table'] = self.TABLE_USER_MAPPING
         
@@ -265,10 +299,12 @@ class FastagAcqPlugin(BasePlugin):
         if operation == Operation.INSERT:
             existing = self.fetch_current_record(self.TABLE_USER_MAPPING, {'user_id': user_id})
             if existing:
-                raise ValueError(f"User mapping {user_id} already exists. Use UPDATE operation.")
+                logging.warning(f"User mapping {user_id} already exists, skipping INSERT")
+                return ProcessStatus.SKIPPED
             
             self._insert_user_mapping(data)
             logging.info(f"Inserted user mapping: {user_id}")
+            return ProcessStatus.INSERTED
             
         elif operation == Operation.UPDATE:
             current = self.fetch_current_record(self.TABLE_USER_MAPPING, {'user_id': user_id})
@@ -280,11 +316,12 @@ class FastagAcqPlugin(BasePlugin):
             
             if not changes:
                 logging.info(f"No changes detected for user_mapping {user_id}")
-                return
+                return ProcessStatus.SKIPPED
             
             self.validate_mutability(changes, override)
             self._update_user_mapping(user_id, data, changes)
             logging.info(f"Updated user_mapping: {user_id}, fields: {list(changes.keys())}")
+            return ProcessStatus.UPDATED
     
     
     def _insert_plaza(self, data: Dict):
