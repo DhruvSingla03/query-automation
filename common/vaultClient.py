@@ -9,7 +9,7 @@ from typing import Dict
 class VaultClient:
     
     def __init__(self):
-        if os.getenv('DEV_MODE', 'false').lower() == 'true':
+        if os.getenv('ENV', 'dev').lower() == 'dev':
             self.dev_mode = True
             logging.info("Running in DEV_MODE - using direct DB credentials from .env")
             return
