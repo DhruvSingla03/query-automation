@@ -1,3 +1,4 @@
 hvac
 oracledb
 python-dotenv
+watchdog

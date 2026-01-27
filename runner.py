@@ -3,13 +3,19 @@
 import csv
 import os
 import sys
+import re
 import logging
 import traceback
+import importlib.util
+import time
 from pathlib import Path
 from typing import Dict
 from dotenv import load_dotenv
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 
-from plugins.fastagAcqPlugin import FastagAcqPlugin
+from utils.Formatting import get_separator
+from common.Constants import FilePatterns, Directories
 
 
 load_dotenv()
@@ -17,10 +23,10 @@ load_dotenv()
 def setup_logging():
     log_dir = Path(__file__).parent / 'logs'
     log_dir.mkdir(exist_ok=True)
-    log_file = log_dir / 'onboarding.log'
+    log_file = log_dir / 'query.log'
     
     formatter = logging.Formatter(
-        '%(asctime)s - [%(filename)s:%(lineno)d] - %(funcName)s() - %(levelname)s - %(message)s',
+        '[%(asctime)s] [%(filename)s:%(lineno)d] [%(funcName)s()] [%(levelname)s] [%(message)s]',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     
@@ -41,36 +47,180 @@ def setup_logging():
     return log_file
 
 LOG_FILE = setup_logging()
-logging.info("=" * 80)
+logging.info(get_separator())
 logging.info("QUERY AUTOMATION STARTED")
 logging.info(f"Log file: {LOG_FILE}")
-logging.info("=" * 80)
+logging.info(get_separator())
 
 
-class OnboardingRunner:
+class CSVFileHandler(FileSystemEventHandler):
+    
+    def __init__(self, runner, folder_name: str, paths: dict, product_code: str):
+        self.runner = runner
+        self.folder_name = folder_name
+        self.paths = paths
+        self.product_code = product_code
+        self.processing_files = set()
+    
+    def on_created(self, event):
+        if event.is_directory:
+            return
+        
+        if not event.src_path.endswith('.csv'):
+            return
+        
+        csv_file = Path(event.src_path)
+        
+        if csv_file.name in self.processing_files:
+            logging.debug(f"File {csv_file.name} already being processed, skipping")
+            return
+        
+        try:
+            self.processing_files.add(csv_file.name)
+            
+            logging.info("")
+            logging.info(get_separator("-"))
+            logging.info(f"NEW FILE DETECTED: {csv_file.name}")
+            logging.info(get_separator("-"))
+            
+            time.sleep(1)
+            
+            if not csv_file.exists():
+                logging.warning(f"File {csv_file.name} no longer exists, skipping")
+                return
+            
+            match = re.match(FilePatterns.CSV_FILENAME, csv_file.name)
+            
+            if not match:
+                logging.error(
+                    f"Skipping file with invalid name format: {csv_file.name}. "
+                    f"Expected format: OLMID_PRODUCT_YYYYMMDD.csv"
+                )
+                failed_path = self.paths[Directories.FAILED] / csv_file.name
+                csv_file.rename(failed_path)
+                logging.error(f"File moved to: {failed_path}")
+                return
+            
+            olmid, file_product, date = match.groups()
+            
+            if file_product != self.product_code:
+                logging.error(
+                    f"Product code mismatch for file: {csv_file.name}. "
+                    f"File product code '{file_product}' does not match folder product '{self.product_code}'. "
+                    f"File should be in products/{file_product.lower()}/inbox/"
+                )
+                failed_path = self.paths[Directories.FAILED] / csv_file.name
+                csv_file.rename(failed_path)
+                logging.error(f"File moved to: {failed_path}")
+                return
+            
+            logging.info(
+                f"Valid file: {csv_file.name} (OLMID: {olmid}, Product: {file_product}, Date: {date})"
+            )
+            
+            self.runner.process_csv_file(csv_file, self.folder_name, self.paths)
+            
+        except Exception as e:
+            logging.error(f"Error processing file {csv_file.name}: {str(e)}")
+            logging.error(traceback.format_exc())
+            try:
+                if csv_file.exists():
+                    failed_path = self.paths[Directories.FAILED] / csv_file.name
+                    csv_file.rename(failed_path)
+                    logging.error(f"File moved to failed: {failed_path}")
+            except Exception as move_error:
+                logging.error(f"Failed to move file to failed folder: {move_error}")
+        finally:
+            self.processing_files.discard(csv_file.name)
+
+
+class QueryRunner:
     
     def __init__(self):
         base_dir = Path(__file__).parent
         self.products_dir = base_dir / 'products'
         self.products_dir.mkdir(exist_ok=True)
         
-        self.plugins = {
-            'FASTAG_ACQ': FastagAcqPlugin()
-        }
+        self.sql_dir = base_dir / Directories.SQL_QUERIES
+        self.sql_dir.mkdir(exist_ok=True)
+        
+        self.plugins = self.discover_products()
         
         self.product_paths = {}
-        for product_code in self.plugins.keys():
-            product_dir = self.products_dir / product_code
-            self.product_paths[product_code] = {
-                'inbox': product_dir / 'inbox',
-                'processing': product_dir / 'processing',
-                'processed': product_dir / 'processed',
-                'failed': product_dir / 'failed',
-                'logs': product_dir / 'logs'
+        for folder_name in self.plugins.keys():
+            product_dir = self.products_dir / folder_name
+            self.product_paths[folder_name] = {
+                Directories.INBOX: product_dir / Directories.INBOX,
+                Directories.PROCESSING: product_dir / Directories.PROCESSING,
+                Directories.PROCESSED: product_dir / Directories.PROCESSED,
+                Directories.FAILED: product_dir / Directories.FAILED,
+                Directories.LOGS: product_dir / Directories.LOGS
             }
             
-            for path in self.product_paths[product_code].values():
+            for path in self.product_paths[folder_name].values():
                 path.mkdir(parents=True, exist_ok=True)
+        
+        logging.info(f"Loaded {len(self.plugins)} product(s): {list(self.plugins.keys())}")
+    
+    def discover_products(self):
+        plugins = {}
+        
+        for product_dir in self.products_dir.iterdir():
+            if not product_dir.is_dir():
+                continue
+            
+            folder_name = product_dir.name
+            plugin_files = list(product_dir.glob('*Plugin.py'))
+            
+            if not plugin_files:
+                logging.warning(f"No plugin file found in {folder_name}/, skipping")
+                continue
+            
+            if len(plugin_files) > 1:
+                logging.warning(f"Multiple plugin files in {folder_name}/, using first: {plugin_files[0].name}")
+            
+            plugin_file = plugin_files[0]
+            plugin_class_name = plugin_file.stem
+            
+            try:
+                module_path = f'products.{folder_name}.{plugin_class_name}'
+                spec = importlib.util.spec_from_file_location(module_path, plugin_file)
+                
+                if spec is None or spec.loader is None:
+                    raise ImportError(f"Could not load spec for {plugin_file}")
+                
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                
+                if not hasattr(module, plugin_class_name):
+                    raise AttributeError(f"Module does not have class {plugin_class_name}")
+                
+                plugin_class = getattr(module, plugin_class_name)
+                plugin_instance = plugin_class()
+                
+                plugins[folder_name] = plugin_instance
+                logging.info(f"Loaded {plugin_class_name} for product: {folder_name}")
+                
+            except ImportError as e:
+                logging.error(f"Import error loading {folder_name}: {e}")
+                logging.error(f"Make sure {plugin_file.name} imports are correct")
+                continue
+                
+            except AttributeError as e:
+                logging.error(f"Class not found in {folder_name}: {e}")
+                logging.error(f"Expected class name: {plugin_class_name}")
+                continue
+                
+            except Exception as e:
+                logging.error(f"Failed to load plugin for {folder_name}: {e}")
+                logging.error(f"Check {plugin_file.name} for errors")
+                logging.error(traceback.format_exc())
+                continue
+        
+        if not plugins:
+            raise RuntimeError("No plugins loaded! Check products/ directory")
+        
+        return plugins
     
     def extract_metadata(self, row: Dict) -> Dict:
         metadata = {
@@ -87,19 +237,23 @@ class OnboardingRunner:
         
         return metadata
     
-    def process_csv_file(self, filepath: Path, product_code: str, paths: dict):
-        logging.info("")
-        logging.info("=" * 80)
-        logging.info(f"PROCESSING FILE: {filepath.name} (Product: {product_code})")
-        logging.info("=" * 80)
+    def process_csv_file(self, filepath: Path, folder_name: str, paths: dict):
+        plugin = self.plugins[folder_name]
+        product_code = plugin.product_code
         
-        processing_path = paths['processing'] / filepath.name
+        logging.info("")
+        logging.info(get_separator())
+        logging.info(f"PROCESSING FILE: {filepath.name} (Product: {product_code})")
+        logging.info(get_separator())
+        
+        processing_path = paths[Directories.PROCESSING] / filepath.name
         filepath.rename(processing_path)
         logging.info(f"Moved to processing: {processing_path}")
         
         total_rows = 0
         successful_rows = []
         failed_rows = []
+        jira_queries = {}
         
         try:
             with open(processing_path, 'r') as f:
@@ -114,9 +268,9 @@ class OnboardingRunner:
             
             for row_num, row in enumerate(rows, start=2):
                 logging.info("")
-                logging.info("-" * 80)
+                logging.info(get_separator("-"))
                 logging.info(f"PROCESSING ROW {row_num}/{total_rows + 1}")
-                logging.info("-" * 80)
+                logging.info(get_separator("-"))
                 
                 try:
                     metadata = self.extract_metadata(row)
@@ -137,6 +291,7 @@ class OnboardingRunner:
                     
                     logging.info(f"Processing row {row_num}")
                     plugin.begin_transaction()
+                    plugin.reset_sql_queries()
                     
                     try:
                         logging.info(f"Calling plugin: {product}")
@@ -145,6 +300,10 @@ class OnboardingRunner:
                         plugin.commit_transaction()
                         successful_rows.append(row_num)
                         logging.info(f"ROW {row_num} PROCESSED SUCCESSFULLY")
+                        
+                        if jira not in jira_queries:
+                            jira_queries[jira] = []
+                        jira_queries[jira].extend(plugin.get_sql_queries())
                         
                     except Exception as e:
                         plugin.rollback_transaction()
@@ -163,8 +322,11 @@ class OnboardingRunner:
             for plugin in self.plugins.values():
                 plugin.close_connection()
             
+            if jira_queries:
+                self.save_sql_queries(filepath.stem, jira_queries)
+            
             if successful_rows:
-                processed_path = paths['processed'] / filepath.name
+                processed_path = paths[Directories.PROCESSED] / filepath.name
                 processing_path.rename(processed_path)
                 if failed_rows:
                     final_status = "PARTIAL SUCCESS"
@@ -172,15 +334,15 @@ class OnboardingRunner:
                     final_status = "SUCCESS"
                 final_path = processed_path
             else:
-                failed_path = paths['failed'] / filepath.name
+                failed_path = paths[Directories.FAILED] / filepath.name
                 processing_path.rename(failed_path)
                 final_status = "FAILED"
                 final_path = failed_path
             
             logging.info("")
-            logging.info("=" * 80)
+            logging.info(get_separator())
             logging.info(f"FILE PROCESSING COMPLETE: {filepath.name}")
-            logging.info("=" * 80)
+            logging.info(get_separator())
             logging.info(f"Status: {final_status}")
             logging.info(f"Total Rows: {total_rows}")
             logging.info(f"Successful: {len(successful_rows)} rows")
@@ -190,19 +352,19 @@ class OnboardingRunner:
             if failed_rows:
                 logging.error(f"Failed rows: {failed_rows}")
             logging.info(f"Final location: {final_path}")
-            logging.info("=" * 80)
+            logging.info(get_separator())
             
         except Exception as e:
             logging.error("")
-            logging.error("=" * 80)
+            logging.error(get_separator())
             logging.error(f"ERROR PROCESSING FILE: {filepath.name}")
-            logging.error("=" * 80)
+            logging.error(get_separator())
             logging.error(f"Error: {str(e)}")
             logging.error("Full stack trace:")
             logging.error(traceback.format_exc())
-            logging.error("=" * 80)
+            logging.error(get_separator())
             
-            failed_path = paths['failed'] / filepath.name
+            failed_path = paths[Directories.FAILED] / filepath.name
             processing_path.rename(failed_path)
             logging.error(f"File moved to: {failed_path}")
             
@@ -211,35 +373,164 @@ class OnboardingRunner:
     def scan_inbox(self):
         logging.info("Scanning product inboxes for CSV files...")
         
-        for product_code, paths in self.product_paths.items():
-            inbox_path = paths['inbox']
+        for folder_name, paths in self.product_paths.items():
+            inbox_path = paths[Directories.INBOX]
+            plugin = self.plugins[folder_name]
+            product_code = plugin.product_code
+            
             csv_files = list(inbox_path.glob('*.csv'))
             
             if csv_files:
-                logging.info(f"Found {len(csv_files)} file(s) in {product_code}/inbox/")
+                logging.info(f"Found {len(csv_files)} file(s) in {folder_name}/inbox/")
             
+            valid_files = []
             for csv_file in csv_files:
+                match = re.match(FilePatterns.CSV_FILENAME, csv_file.name)
+                
+                if not match:
+                    logging.error(
+                        f"Skipping file with invalid name format: {csv_file.name}. "
+                        f"Expected format: OLMID_PRODUCT_YYYYMMDD.csv"
+                    )
+                    failed_path = paths[Directories.FAILED] / csv_file.name
+                    csv_file.rename(failed_path)
+                    logging.error(f"File moved to: {failed_path}")
+                    continue
+                
+                olmid, file_product, date = match.groups()
+                
+                if file_product != product_code:
+                    logging.error(
+                        f"Product code mismatch for file: {csv_file.name}. "
+                        f"File product code '{file_product}' does not match folder product '{product_code}'. "
+                        f"File should be in products/{file_product.lower()}/inbox/"
+                    )
+                    failed_path = paths[Directories.FAILED] / csv_file.name
+                    csv_file.rename(failed_path)
+                    logging.error(f"File moved to: {failed_path}")
+                    continue
+                
+                valid_files.append(csv_file)
+                logging.info(
+                    f"Valid file: {csv_file.name} (OLMID: {olmid}, Product: {file_product}, Date: {date})"
+                )
+            
+            for csv_file in valid_files:
                 try:
-                    self.process_csv_file(csv_file, product_code, paths)
+                    self.process_csv_file(csv_file, folder_name, paths)
                 except Exception as e:
                     logging.error(f"Failed to process {csv_file.name}: {str(e)}")
+    
+    def save_sql_queries(self, csv_filename: str, jira_queries: dict):
+        for jira, queries in jira_queries.items():
+            sql_filename = f"{csv_filename}_{jira}.sql"
+            sql_filepath = self.sql_dir / sql_filename
+            
+            try:
+                with open(sql_filepath, 'w') as f:
+                    f.write(f"-- SQL Queries for {csv_filename}\n")
+                    f.write(f"-- JIRA: {jira}\n")
+                    f.write(f"-- Total queries: {len(queries)}\n")
+                    f.write(f"-- Generated: {Path(__file__).parent}\n\n")
+                    
+                    for idx, query_info in enumerate(queries, start=1):
+                        sql = query_info['sql']
+                        params = query_info['params']
+                        
+                        f.write(f"-- Query {idx}\n")
+                        if params:
+                            f.write(f"-- Parameters: {params}\n")
+                        f.write(f"{sql};\n\n")
+                
+                logging.info(f"Saved {len(queries)} SQL queries to: {sql_filepath}")
+            
+            except Exception as e:
+                logging.error(f"Failed to save SQL queries for {jira}: {str(e)}")
+
+
+    def watch_mode(self):
+        logging.info(get_separator())
+        logging.info("STARTING WATCH SERVICE")
+        logging.info(get_separator())
+        logging.info(f"Monitoring {len(self.product_paths)} product inbox(es) for new CSV files...")
+        logging.info("Press Ctrl+C to stop")
+        logging.info(get_separator())
+        
+        observers = []
+        handlers = []
+        
+        try:
+            for folder_name, paths in self.product_paths.items():
+                inbox_path = paths[Directories.INBOX]
+                plugin = self.plugins[folder_name]
+                product_code = plugin.product_code
+                
+                handler = CSVFileHandler(self, folder_name, paths, product_code)
+                handlers.append(handler)
+                
+                observer = Observer()
+                observer.schedule(handler, str(inbox_path), recursive=False)
+                observer.start()
+                observers.append(observer)
+                
+                logging.info(f"Watching: {inbox_path} (Product: {product_code})")
+            
+            logging.info(get_separator())
+            logging.info("Watch service active. Waiting for files...")
+            logging.info(get_separator())
+            
+            while True:
+                time.sleep(1)
+                
+        except KeyboardInterrupt:
+            logging.info("")
+            logging.info(get_separator())
+            logging.info("STOPPING WATCH SERVICE (Ctrl+C received)")
+            logging.info(get_separator())
+            
+        except Exception as e:
+            logging.critical("")
+            logging.critical(get_separator())
+            logging.critical("WATCH SERVICE ENCOUNTERED CRITICAL ERROR")
+            logging.critical(get_separator())
+            logging.critical(f"Error: {str(e)}")
+            logging.critical(traceback.format_exc())
+            logging.critical(get_separator())
+            
+        finally:
+            logging.info("Stopping file observers...")
+            for observer in observers:
+                observer.stop()
+            
+            logging.info("Waiting for observers to finish...")
+            for observer in observers:
+                observer.join()
+            
+            logging.info(get_separator())
+            logging.info("WATCH SERVICE STOPPED")
+            logging.info(get_separator())
 
 
 if __name__ == '__main__':
     try:
-        runner = OnboardingRunner()
-        runner.scan_inbox()
-        logging.info("")
-        logging.info("=" * 80)
-        logging.info("QUERY AUTOMATION ENDED")
-        logging.info("=" * 80)
+        runner = QueryRunner()
+        
+        if '--watch' in sys.argv or '-w' in sys.argv:
+            runner.watch_mode()
+        else:
+            runner.scan_inbox()
+            logging.info("")
+            logging.info(get_separator())
+            logging.info("QUERY AUTOMATION ENDED")
+            logging.info(get_separator())
+            
     except Exception as e:
         logging.critical("")
-        logging.critical("=" * 80)
+        logging.critical(get_separator())
         logging.critical("QUERY AUTOMATION FAILED")
-        logging.critical("=" * 80)
+        logging.critical(get_separator())
         logging.critical(f"Error: {str(e)}")
         logging.critical("Full stack trace:")
         logging.critical(traceback.format_exc())
-        logging.critical("=" * 80)
+        logging.critical(get_separator())
         sys.exit(1)

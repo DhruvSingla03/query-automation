@@ -1,30 +1,28 @@
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent.parent.parent))
+
 import os
 import re
 import logging
 from typing import Dict, List
-from common.basePlugin import BasePlugin
-from common.constants import Operation, ProcessStatus
+from .Constants import Product, Tables, FieldRules
+from common.BasePlugin import BasePlugin
+from common.Constants import Operation, ProcessStatus
 
 class FastagAcqPlugin(BasePlugin):
     
-    TABLE_PLAZA = 'NETCACQ_PLAZA_DTLS'
-    TABLE_CONCESSIONAIRE = 'NETCACQ_PLAZA_CONCESSION_DTLS'
-    TABLE_LANE = 'NETCACQ_PLAZA_LANE_DTLS'
-    TABLE_FARE = 'NETCACQ_PLAZA_FARE_DTLS'
-    TABLE_VEHICLE_MAPPING = 'NETCACQ_VHCLCLASS_MAPPING_DETAILS'
-    TABLE_USER_MAPPING = 'NETCACQ_USER_ROLE_MAPPING_DTLS'
-    
-    MUTABLE_FIELDS = {
-        TABLE_PLAZA: ['internal_account', 'settlement_account', 'biller_code', 'merchant_id', 'modified_ts'],
-        TABLE_CONCESSIONAIRE: ['concessionaire_name', 'pan_no', 'gstin_no', 'concessionaire_type', 'description', 'mobile_no', 'email_id', 'address', 'city', 'state', 'pincode', 'country', 'account_info', 'mdr', 'modified_ts'],
-        TABLE_LANE: ['modified_ts', 'merchant_vpa'],
-        TABLE_FARE: ['modified_ts'],
-        TABLE_VEHICLE_MAPPING: ['modified_ts'],
-        TABLE_USER_MAPPING: ['modified_ts']
-    }
-    
     def __init__(self):
-        super().__init__('FASTAG_ACQ')
+        super().__init__(Product.CODE)
+        
+        self.TABLE_PLAZA = Tables.PLAZA
+        self.TABLE_CONCESSIONAIRE = Tables.CONCESSIONAIRE
+        self.TABLE_LANE = Tables.LANE
+        self.TABLE_FARE = Tables.FARE
+        self.TABLE_VEHICLE_MAPPING = Tables.VEHICLE_MAPPING
+        self.TABLE_USER_MAPPING = Tables.USER_MAPPING
+        
+        self.MUTABLE_FIELDS = FieldRules.MUTABLE
     
     def get_mutable_fields(self, table: str) -> List[str]:
         return self.MUTABLE_FIELDS.get(table, [])
@@ -60,6 +58,24 @@ class FastagAcqPlugin(BasePlugin):
         override = metadata.get('override', 'false').lower() == 'true'
         
         logging.info(f"Processing row: jira={metadata['jira']}, operation={operation}, override={override}")
+        
+        if self.has_table_data(row, 'plaza'):
+            plaza_type = self.extract_table_data(row, 'plaza').get('type', '').strip().lower()
+            
+            if plaza_type == 'parking':
+                if not self.has_table_data(row, 'conc'):
+                    raise ValueError("For parking plaza type, concessionaire data is mandatory")
+                if not self.has_table_data(row, 'lane'):
+                    raise ValueError("For parking plaza type, lane data is mandatory")
+            elif plaza_type == 'toll':
+                if not self.has_table_data(row, 'conc'):
+                    raise ValueError("For toll plaza type, concessionaire data is mandatory")
+                if not self.has_table_data(row, 'lane'):
+                    raise ValueError("For toll plaza type, lane data is mandatory")
+                if not self.has_table_data(row, 'fare'):
+                    raise ValueError("For toll plaza type, fare data is mandatory")
+                if not self.has_table_data(row, 'vmap'):
+                    raise ValueError("For toll plaza type, vehicle mapping data is mandatory")
         
         results = {
             ProcessStatus.INSERTED: [],
@@ -338,12 +354,12 @@ class FastagAcqPlugin(BasePlugin):
                 param_num += 1
         
         fields.append('created_ts')
-        placeholders.append('SYSDATE')  # Oracle: use SYSDATE
+        placeholders.append('SYSDATE')
         fields.append('modified_ts')
         placeholders.append('SYSDATE')
         
         sql = f"INSERT INTO {self.TABLE_PLAZA} ({', '.join(fields)}) VALUES ({', '.join(placeholders)})"
-        self.execute_query(sql, values)  # Oracle uses list, not tuple
+        self.execute_query(sql, values)
     
     def _update_plaza(self, plaza_id: str, data: Dict, changes: Dict):
         set_parts = []
@@ -356,7 +372,7 @@ class FastagAcqPlugin(BasePlugin):
                 values.append(data[field])
                 param_num += 1
         
-        set_parts.append("modified_ts = SYSDATE")  # Oracle: SYSDATE
+        set_parts.append("modified_ts = SYSDATE")
         values.append(plaza_id)
         
         sql = f"UPDATE {self.TABLE_PLAZA} SET {', '.join(set_parts)} WHERE plaza_id = :{param_num}"
@@ -497,7 +513,7 @@ class FastagAcqPlugin(BasePlugin):
         sql = f"INSERT INTO {self.TABLE_VEHICLE_MAPPING} ({', '.join(fields)}) VALUES ({', '.join(placeholders)})"
         self.execute_query(sql, values)
     
-    def _update_vehicle_mapping(self, plaza_id: str, data: Dict, changes: Dict):
+    def _update_vehicle_mapping(self, plaza_id: str, mvc_id: str, data: Dict, changes: Dict):
         set_parts = []
         values = []
         

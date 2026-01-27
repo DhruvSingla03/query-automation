@@ -1,7 +1,7 @@
 import oracledb
 import logging
 from typing import Dict, Optional, List
-from .vaultClient import VaultClient
+from .VaultClient import VaultClient
 
 
 class BasePlugin:
@@ -10,6 +10,7 @@ class BasePlugin:
         self.product_code = product_code
         self.vault = VaultClient()
         self._db_conn = None
+        self.sql_queries = []
     
     def get_db_connection(self):
         if self._db_conn is None:
@@ -44,6 +45,11 @@ class BasePlugin:
         logging.debug("Transaction rolled back")
     
     def execute_query(self, sql: str, params: Optional[tuple] = None, fetch_one: bool = False):
+        self.sql_queries.append({
+            'sql': sql,
+            'params': params or []
+        })
+        
         conn = self.get_db_connection()
         cursor = conn.cursor()
         try:
@@ -135,3 +141,9 @@ class BasePlugin:
     
     def process_row(self, row: Dict, metadata: Dict):
         raise NotImplementedError("Subclass must implement process_row()")
+    
+    def get_sql_queries(self) -> List[Dict]:
+        return self.sql_queries
+    
+    def reset_sql_queries(self):
+        self.sql_queries = []
