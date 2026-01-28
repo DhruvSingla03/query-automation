@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
-from utils.Formatting import get_separator
+from utils.Formatting import get_separator, get_log_formatter
 from common.Constants import FilePatterns, Directories
 
 
@@ -25,10 +25,7 @@ def setup_logging():
     log_dir.mkdir(exist_ok=True)
     log_file = log_dir / 'query.log'
     
-    formatter = logging.Formatter(
-        '[%(asctime)s] [%(filename)s:%(lineno)d] [%(funcName)s()] [%(levelname)s] [%(message)s]',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
+    formatter = get_log_formatter()
     
     file_handler = logging.FileHandler(log_file)
     file_handler.setLevel(logging.DEBUG)
@@ -278,23 +275,22 @@ class QueryRunner:
                     product = metadata['product']
                     
                     if product != product_code:
-                        raise ValueError(f"File in {product_code} folder but meta.product is {product}")
+                        raise ValueError(
+                            f"Metadata mismatch: CSV in {folder_name}/ folder has meta.product={product}, "
+                            f"expected {product_code}"
+                        )
                     
                     logging.info(
                         f"Row {row_num}: Task ID={jira}, Product={product}, "
                         f"Operation={metadata['operation']}, Override={metadata['override']}"
                     )
                     
-                    plugin = self.plugins.get(product)
-                    if not plugin:
-                        raise ValueError(f"No plugin found for product: {product}")
-                    
                     logging.info(f"Processing row {row_num}")
                     plugin.begin_transaction()
                     plugin.reset_sql_queries()
                     
                     try:
-                        logging.info(f"Calling plugin: {product}")
+                        logging.info(f"Calling plugin: {folder_name} ({product_code})")
                         plugin.process_row(row, metadata)
                         
                         plugin.commit_transaction()

@@ -1,8 +1,19 @@
 class Product:
     CODE = 'FASTAG_ACQ'
     FOLDER = 'fastagacq'
-    DISPLAY_NAME = 'FASTag Acquiring'
-    VAULT_PATH = 'secret/data/fastag_acq/database'
+    NAME = 'NETC-FASTag Acquiring'
+
+class VaultConfig:
+    DEV = {
+        'url': '<dev_vault_url>',
+        'token': '<dev_vault_token>',
+        'secret_path': '<dev_secret_path>'
+    }
+    PROD = {
+        'url': '<prod_vault_url>',
+        'token': '<prod_vault_token>',
+        'secret_path': '<prod_secret_path>'
+    }
 
 class Tables:
     PLAZA = 'NETCACQ_PLAZA_DTLS'

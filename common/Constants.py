@@ -15,12 +15,17 @@ class MetadataField:
     OVERRIDE = 'override'
 
 class FilePatterns:
-    CSV_FILENAME = r'^([a-zA-Z0-9_]+)_([A-Z_]+)_(\d{8})\.csv$'
+    CSV_FILENAME = r'^([Bb]\d{7})_([A-Z_]+)_(\d{8})\.csv$'
 
 class Directories:
-    SQL_QUERIES = 'sql_queries'
+    SQL_QUERIES = 'sqlqueries'
     INBOX = 'inbox'
     PROCESSING = 'processing'
     PROCESSED = 'processed'
     FAILED = 'failed'
     LOGS = 'logs'
+
+class Formatting:
+    MAX_LOG_PREFIX_WIDTH = 90
+    TIMESTAMP_WIDTH = 23
+    LEVEL_WIDTH = 12

@@ -1,106 +1,73 @@
 import hvac
 import os
 import logging
-import threading
-import time
 from typing import Dict
 
 
 class VaultClient:
     
-    def __init__(self):
-        if os.getenv('ENV', 'dev').lower() == 'dev':
-            self.dev_mode = True
-            logging.info("Running in DEV_MODE - using direct DB credentials from .env")
-            return
+    def __init__(self, vault_config=None):
+        if vault_config is None:
+            raise ValueError("vault_config is required (product's VaultConfig class)")
         
-        self.dev_mode = False
-        self.vault_addr = os.getenv('VAULT_ADDR')
-        self.role_id = os.getenv('VAULT_ROLE_ID')
-        self.secret_id = os.getenv('VAULT_SECRET_ID')
+        env = os.getenv('ENV', 'dev').lower()
         
-        if not self.vault_addr or not self.role_id or not self.secret_id:
-            raise ValueError(
-                "VAULT_ADDR, VAULT_ROLE_ID, and VAULT_SECRET_ID must be set"
-            )
+        if env == 'dev':
+            config = vault_config.DEV
+        elif env in ('prod', 'production'):
+            config = vault_config.PROD
+        else:
+            raise ValueError(f"Invalid ENV value: {env}. Must be 'dev' or 'prod'")
         
-        self.client = hvac.Client(url=self.vault_addr)
-        self._authenticate()
-        self._start_token_renewal()
-    
-    def _authenticate(self):
+        self.vault_url = config['url']
+        self.vault_token = config['token']
+        self.secret_path = config['secret_path']
+        
+        if not self.vault_url or self.vault_url.startswith('<'):
+            raise ValueError(f"Vault URL not configured for {env} environment in VaultConfig")
+        
+        if not self.vault_token or self.vault_token.startswith('<'):
+            raise ValueError(f"Vault token not configured for {env} environment in VaultConfig")
+        
+        if not self.secret_path or self.secret_path.startswith('<'):
+            raise ValueError(f"Secret path not configured for {env} environment in VaultConfig")
+        
         try:
-            auth_response = self.client.auth.approle.login(
-                role_id=self.role_id,
-                secret_id=self.secret_id
+            self.client = hvac.Client(
+                url=self.vault_url,
+                token=self.vault_token
             )
-            self.client.token = auth_response['auth']['client_token']
-            self.token_lease_duration = auth_response['auth']['lease_duration']
             
             if not self.client.is_authenticated():
-                raise Exception("Failed to authenticate with Vault AppRole")
-                
+                raise Exception("Failed to authenticate with Vault - invalid token")
+            
+            logging.info(f"Connected to Vault ({env}): {self.vault_url}")
+            
         except Exception as e:
-            raise Exception(f"Vault authentication failed: {e}")
+            raise Exception(f"Vault connection failed: {e}")
     
-    def _start_token_renewal(self):
-        def renew_token():
-            while True:
-                sleep_time = self.token_lease_duration * 0.8
-                time.sleep(sleep_time)
-                
-                try:
-                    renew_response = self.client.auth.token.renew_self()
-                    self.token_lease_duration = renew_response['auth']['lease_duration']
-                    print(f"Vault token renewed. New TTL: {self.token_lease_duration}s")
-                except Exception as e:
-                    print(f"Token renewal failed, re-authenticating: {e}")
-                    self._authenticate()
-        
-        renewal_thread = threading.Thread(target=renew_token, daemon=True)
-        renewal_thread.start()
-    
-    def get_db_credentials(self, product_code: str) -> Dict:
-        
-        if self.dev_mode:
-            return {
-                'host': os.getenv('DB_HOST', 'localhost'),
-                'port': int(os.getenv('DB_PORT', 3306)),
-                'database': os.getenv('DB_DATABASE'),
-                'username': os.getenv('DB_USERNAME'),
-                'password': os.getenv('DB_PASSWORD')
-            }
-        
-        path_env = f'VAULT_PATH_{product_code.upper()}'
-        vault_path = os.getenv(path_env)
-        
-        if not vault_path:
-            raise ValueError(
-                f"Vault path not configured for product {product_code}. "
-                f"Expected environment variable: {path_env}"
-            )
-        
+    def get_secret(self, path: str) -> Dict:
         try:
-            secret = self.client.secrets.kv.v2.read_secret_version(path=vault_path)
-            return secret['data']['data']
+            response = self.client.secrets.kv.v2.read_secret_version(path=path)
+            return response['data']['data']
         except Exception as e:
-            raise Exception(f"Failed to fetch credentials for {product_code}: {e}")
+            raise Exception(f"Failed to read secret from path '{path}': {e}")
     
-    def get_audit_db_credentials(self) -> Dict:
-        
-        if self.dev_mode:
-            return {
-                'host': os.getenv('DB_HOST', 'localhost'),
-                'port': int(os.getenv('DB_PORT', 3306)),
-                'database': os.getenv('DB_DATABASE'),
-                'username': os.getenv('DB_USERNAME'),
-                'password': os.getenv('DB_PASSWORD')
-            }
-        
-        audit_path = os.getenv('VAULT_PATH_AUDIT', 'secret/data/audit/database')
-        
+    def get_db_credentials(self) -> Dict:
         try:
-            secret = self.client.secrets.kv.v2.read_secret_version(path=audit_path)
-            return secret['data']['data']
+            credentials = self.get_secret(self.secret_path)
+            
+            required_fields = ['host', 'username', 'password', 'database']
+            missing = [f for f in required_fields if f not in credentials]
+            if missing:
+                raise ValueError(f"Missing required fields in Vault secret: {missing}")
+            
+            if 'port' in credentials:
+                credentials['port'] = int(credentials['port'])
+            else:
+                credentials['port'] = 1521
+            
+            return credentials
+            
         except Exception as e:
-            raise Exception(f"Failed to fetch audit DB credentials: {e}")
+            raise Exception(f"Failed to fetch credentials from {self.secret_path}: {e}")

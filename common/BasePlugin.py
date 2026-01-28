@@ -6,15 +6,15 @@ from .VaultClient import VaultClient
 
 class BasePlugin:
     
-    def __init__(self, product_code: str):
+    def __init__(self, product_code: str, vault_config):
         self.product_code = product_code
-        self.vault = VaultClient()
+        self.vault = VaultClient(vault_config)
         self._db_conn = None
         self.sql_queries = []
     
     def get_db_connection(self):
         if self._db_conn is None:
-            creds = self.vault.get_db_credentials(self.product_code)
+            creds = self.vault.get_db_credentials()
             
             dsn = oracledb.makedsn(
                 creds['host'],

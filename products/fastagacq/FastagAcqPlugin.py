@@ -6,14 +6,14 @@ import os
 import re
 import logging
 from typing import Dict, List
-from .Constants import Product, Tables, FieldRules
+from .Constants import Product, Tables, FieldRules, VaultConfig
 from common.BasePlugin import BasePlugin
 from common.Constants import Operation, ProcessStatus
 
 class FastagAcqPlugin(BasePlugin):
     
     def __init__(self):
-        super().__init__(Product.CODE)
+        super().__init__(Product.CODE, VaultConfig)
         
         self.TABLE_PLAZA = Tables.PLAZA
         self.TABLE_CONCESSIONAIRE = Tables.CONCESSIONAIRE

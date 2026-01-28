@@ -44,6 +44,7 @@ venv.bak/
 .project
 .pydevproject
 .settings/
+.agent/
 
 # OS
 .DS_Store
