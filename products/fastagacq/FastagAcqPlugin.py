@@ -6,7 +6,7 @@ import os
 import re
 import logging
 from typing import Dict, List
-from .Constants import Product, Tables, FieldRules, VaultConfig
+from .FastagAcqConfig import Product, Tables, FieldRules, VaultConfig
 from common.BasePlugin import BasePlugin
 from common.Constants import Operation, ProcessStatus
 
