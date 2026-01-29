@@ -15,6 +15,22 @@ class VaultConfig:
         'secret_path': '<prod_secret_path>'
     }
 
+class SftpConfig:
+    DEV = {
+        'host': '<sftp_host>',
+        'port': 22,
+        'username': '<username>',
+        'password': '<password>',
+        'base_path': 'products/fastagacq'
+    }
+    PROD = {
+        'host': '<sftp_host>',
+        'port': 22,
+        'username': '<username>',
+        'password': '<password>',
+        'base_path': 'products/fastagacq'
+    }
+
 class Tables:
     PLAZA = 'NETCACQ_PLAZA_DTLS'
     CONCESSIONAIRE = 'NETCACQ_PLAZA_CONCESSION_DTLS'

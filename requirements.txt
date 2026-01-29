@@ -2,3 +2,4 @@ hvac
 oracledb
 python-dotenv
 watchdog
+paramiko

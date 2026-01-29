@@ -18,6 +18,7 @@ from utils.Formatting import get_separator, get_log_formatter
 from common.Constants import FilePatterns, Directories
 
 
+
 load_dotenv()
 
 def setup_logging():
@@ -433,10 +434,10 @@ class QueryRunner:
                         sql = query_info['sql']
                         params = query_info['params']
                         
+                        formatted_sql = format_sql_with_values(sql, params)
+                        
                         f.write(f"-- Query {idx}\n")
-                        if params:
-                            f.write(f"-- Parameters: {params}\n")
-                        f.write(f"{sql};\n\n")
+                        f.write(f"{formatted_sql};\n\n")
                 
                 logging.info(f"Saved {len(queries)} SQL queries to: {sql_filepath}")
             
@@ -444,6 +445,123 @@ class QueryRunner:
                 logging.error(f"Failed to save SQL queries for {jira}: {str(e)}")
 
 
+    
+    def sftp_mode(self):
+        logging.info(get_separator())
+        logging.info("SFTP POLLING SERVICE")
+        logging.info(get_separator())
+        
+        from common.SftpClient import SftpClient
+        
+        poll_interval = int(os.getenv('SFTP_POLL_INTERVAL', 60))
+        logging.info(f"Poll interval: {poll_interval} seconds")
+        logging.info("")
+        
+        sftp_clients = {}
+        
+        try:
+            for folder_name, plugin in self.plugins.items():
+                product_config_path = plugin.__class__.__module__.rsplit('.', 1)[0]
+                config_module = importlib.import_module(f"{product_config_path}.FastagAcqConfig")
+                
+                env = os.getenv('ENV', 'dev').lower()
+                sftp_config = config_module.SftpConfig.DEV if env == 'dev' else config_module.SftpConfig.PROD
+                
+                sftp_clients[folder_name] = {
+                    'client': SftpClient(sftp_config),
+                    'base_path': sftp_config['base_path']
+                }
+                logging.info(f"Connected to SFTP for {folder_name}: {sftp_config['host']}")
+            
+            logging.info(get_separator())
+            logging.info("Polling started. Press Ctrl+C to stop.")
+            logging.info(get_separator())
+            
+            while True:
+                for folder_name, sftp_info in sftp_clients.items():
+                    sftp = sftp_info['client']
+                    base_path = sftp_info['base_path']
+                    remote_inbox = f"{base_path}/inbox"
+                    
+                    try:
+                        files = sftp.list_files(remote_inbox)
+                        
+                        for filename in files:
+                            if not filename.endswith('.csv'):
+                                continue
+                            
+                            try:
+                                match = re.match(FilePatterns.CSV_FILENAME, filename)
+                                if not match:
+                                    logging.warning(f"Skipping invalid filename: {filename}")
+                                    remote_failed = f"{base_path}/failed/{filename}"
+                                    sftp.move_file(f"{remote_inbox}/{filename}", remote_failed)
+                                    continue
+                                
+                                olmid, file_product, date = match.groups()
+                                product_code = self.plugins[folder_name].product_code
+                                
+                                if file_product != product_code:
+                                    logging.error(f"Product mismatch in {filename}: {file_product} != {product_code}")
+                                    remote_failed = f"{base_path}/failed/{filename}"
+                                    sftp.move_file(f"{remote_inbox}/{filename}", remote_failed)
+                                    continue
+                                
+                                logging.info("")
+                                logging.info(get_separator("-"))
+                                logging.info(f"NEW FILE ON SFTP: {filename}")
+                                logging.info(get_separator("-"))
+                                
+                                remote_processing = f"{base_path}/processing/{filename}"
+                                sftp.move_file(f"{remote_inbox}/{filename}", remote_processing)
+                                
+                                local_inbox = self.product_paths[folder_name][Directories.INBOX]
+                                local_file = local_inbox / filename
+                                
+                                sftp.download_file(remote_processing, str(local_file))
+                                logging.info(f"Downloaded to: {local_file}")
+                                
+                                self.process_csv_file(local_file, folder_name, self.product_paths[folder_name])
+                                
+                                if local_file.exists():
+                                    processed_path = self.product_paths[folder_name][Directories.PROCESSED] / filename
+                                    if processed_path.exists():
+                                        remote_processed = f"{base_path}/processed/{filename}"
+                                        sftp.move_file(remote_processing, remote_processed)
+                                        logging.info(f"Moved on SFTP to: processed/{filename}")
+                                    else:
+                                        failed_path = self.product_paths[folder_name][Directories.FAILED] / filename
+                                        if failed_path.exists():
+                                            remote_failed = f"{base_path}/failed/{filename}"
+                                            sftp.move_file(remote_processing, remote_failed)
+                                            logging.info(f"Moved on SFTP to: failed/{filename}")
+                                
+                            except Exception as e:
+                                logging.error(f"Error processing {filename}: {e}")
+                                logging.error(traceback.format_exc())
+                                try:
+                                    remote_failed = f"{base_path}/failed/{filename}"
+                                    sftp.move_file(f"{remote_inbox}/{filename}", remote_failed)
+                                except:
+                                    pass
+                    
+                    except Exception as e:
+                        logging.error(f"Error polling {folder_name}: {e}")
+                
+                time.sleep(poll_interval)
+        
+        except KeyboardInterrupt:
+            logging.info("")
+            logging.info(get_separator())
+            logging.info("Polling stopped by user")
+            logging.info(get_separator())
+        finally:
+            for sftp_info in sftp_clients.values():
+                try:
+                    sftp_info['client'].close()
+                except:
+                    pass
+    
     def watch_mode(self):
         logging.info(get_separator())
         logging.info("STARTING WATCH SERVICE")
@@ -511,7 +629,9 @@ if __name__ == '__main__':
     try:
         runner = QueryRunner()
         
-        if '--watch' in sys.argv or '-w' in sys.argv:
+        if '--sftp' in sys.argv or '-s' in sys.argv:
+            runner.sftp_mode()
+        elif '--watch' in sys.argv or '-w' in sys.argv:
             runner.watch_mode()
         else:
             runner.scan_inbox()
