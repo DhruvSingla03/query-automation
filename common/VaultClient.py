@@ -35,7 +35,8 @@ class VaultClient:
         try:
             self.client = hvac.Client(
                 url=self.vault_url,
-                token=self.vault_token
+                token=self.vault_token,
+                verify=False
             )
             
             if not self.client.is_authenticated():

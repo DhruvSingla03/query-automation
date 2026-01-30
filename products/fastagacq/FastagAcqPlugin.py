@@ -348,15 +348,14 @@ class FastagAcqPlugin(BasePlugin):
         param_num = 1
         for key, value in data.items():
             if key != '_table':
+                is_sql_func, processed_value = self.process_value_for_sql(value)
                 fields.append(key)
-                values.append(value)
-                placeholders.append(f':{param_num}')
-                param_num += 1
-        
-        fields.append('created_ts')
-        placeholders.append('SYSDATE')
-        fields.append('modified_ts')
-        placeholders.append('SYSDATE')
+                if is_sql_func:
+                    placeholders.append(processed_value)
+                else:
+                    placeholders.append(f':{param_num}')
+                    values.append(processed_value)
+                    param_num += 1
         
         sql = f"INSERT INTO {self.TABLE_PLAZA} ({', '.join(fields)}) VALUES ({', '.join(placeholders)})"
         self.execute_query(sql, values)
@@ -368,11 +367,14 @@ class FastagAcqPlugin(BasePlugin):
         param_num = 1
         for field in changes.keys():
             if field in data:
-                set_parts.append(f"{field} = :{param_num}")
-                values.append(data[field])
-                param_num += 1
+                is_sql_func, processed_value = self.process_value_for_sql(data[field])
+                if is_sql_func:
+                    set_parts.append(f"{field} = {processed_value}")
+                else:
+                    set_parts.append(f"{field} = :{param_num}")
+                    values.append(processed_value)
+                    param_num += 1
         
-        set_parts.append("modified_ts = SYSDATE")
         values.append(plaza_id)
         
         sql = f"UPDATE {self.TABLE_PLAZA} SET {', '.join(set_parts)} WHERE plaza_id = :{param_num}"
@@ -386,15 +388,14 @@ class FastagAcqPlugin(BasePlugin):
         param_num = 1
         for key, value in data.items():
             if key != '_table':
+                is_sql_func, processed_value = self.process_value_for_sql(value)
                 fields.append(key)
-                values.append(value)
-                placeholders.append(f':{param_num}')
-                param_num += 1
-        
-        fields.append('created_ts')
-        placeholders.append('SYSDATE')
-        fields.append('modified_ts')
-        placeholders.append('SYSDATE')
+                if is_sql_func:
+                    placeholders.append(processed_value)
+                else:
+                    placeholders.append(f':{param_num}')
+                    values.append(processed_value)
+                    param_num += 1
         
         sql = f"INSERT INTO {self.TABLE_CONCESSIONAIRE} ({', '.join(fields)}) VALUES ({', '.join(placeholders)})"
         self.execute_query(sql, values)
@@ -406,11 +407,14 @@ class FastagAcqPlugin(BasePlugin):
         param_num = 1
         for field in changes.keys():
             if field in data:
-                set_parts.append(f"{field} = :{param_num}")
-                values.append(data[field])
-                param_num += 1
+                is_sql_func, processed_value = self.process_value_for_sql(data[field])
+                if is_sql_func:
+                    set_parts.append(f"{field} = {processed_value}")
+                else:
+                    set_parts.append(f"{field} = :{param_num}")
+                    values.append(processed_value)
+                    param_num += 1
         
-        set_parts.append("modified_ts = SYSDATE")
         values.append(conc_id)
         
         sql = f"UPDATE {self.TABLE_CONCESSIONAIRE} SET {', '.join(set_parts)} WHERE concessionaire_id = :{param_num}"
@@ -424,15 +428,14 @@ class FastagAcqPlugin(BasePlugin):
         param_num = 1
         for key, value in data.items():
             if key != '_table':
+                is_sql_func, processed_value = self.process_value_for_sql(value)
                 fields.append(key)
-                values.append(value)
-                placeholders.append(f':{param_num}')
-                param_num += 1
-        
-        fields.append('created_ts')
-        placeholders.append('SYSDATE')
-        fields.append('modified_ts')
-        placeholders.append('SYSDATE')
+                if is_sql_func:
+                    placeholders.append(processed_value)
+                else:
+                    placeholders.append(f':{param_num}')
+                    values.append(processed_value)
+                    param_num += 1
         
         sql = f"INSERT INTO {self.TABLE_LANE} ({', '.join(fields)}) VALUES ({', '.join(placeholders)})"
         self.execute_query(sql, values)
@@ -444,11 +447,14 @@ class FastagAcqPlugin(BasePlugin):
         param_num = 1
         for field in changes.keys():
             if field in data:
-                set_parts.append(f"{field} = :{param_num}")
-                values.append(data[field])
-                param_num += 1
+                is_sql_func, processed_value = self.process_value_for_sql(data[field])
+                if is_sql_func:
+                    set_parts.append(f"{field} = {processed_value}")
+                else:
+                    set_parts.append(f"{field} = :{param_num}")
+                    values.append(processed_value)
+                    param_num += 1
         
-        set_parts.append("modified_ts = SYSDATE")
         values.extend([plaza_id, lane_id])
         
         sql = f"UPDATE {self.TABLE_LANE} SET {', '.join(set_parts)} WHERE plaza_id = :{param_num} AND lane_id = :{param_num+1}"
@@ -462,15 +468,14 @@ class FastagAcqPlugin(BasePlugin):
         param_num = 1
         for key, value in data.items():
             if key != '_table':
+                is_sql_func, processed_value = self.process_value_for_sql(value)
                 fields.append(key)
-                values.append(value)
-                placeholders.append(f':{param_num}')
-                param_num += 1
-        
-        fields.append('created_ts')
-        placeholders.append('SYSDATE')
-        fields.append('modified_ts')
-        placeholders.append('SYSDATE')
+                if is_sql_func:
+                    placeholders.append(processed_value)
+                else:
+                    placeholders.append(f':{param_num}')
+                    values.append(processed_value)
+                    param_num += 1
         
         sql = f"INSERT INTO {self.TABLE_FARE} ({', '.join(fields)}) VALUES ({', '.join(placeholders)})"
         self.execute_query(sql, values)
@@ -482,11 +487,14 @@ class FastagAcqPlugin(BasePlugin):
         param_num = 1
         for field in changes.keys():
             if field in data:
-                set_parts.append(f"{field} = :{param_num}")
-                values.append(data[field])
-                param_num += 1
+                is_sql_func, processed_value = self.process_value_for_sql(data[field])
+                if is_sql_func:
+                    set_parts.append(f"{field} = {processed_value}")
+                else:
+                    set_parts.append(f"{field} = :{param_num}")
+                    values.append(processed_value)
+                    param_num += 1
         
-        set_parts.append("modified_ts = SYSDATE")
         values.append(fare_id)
         
         sql = f"UPDATE {self.TABLE_FARE} SET {', '.join(set_parts)} WHERE fare_id = :{param_num}"
@@ -500,15 +508,14 @@ class FastagAcqPlugin(BasePlugin):
         param_num = 1
         for key, value in data.items():
             if key != '_table':
+                is_sql_func, processed_value = self.process_value_for_sql(value)
                 fields.append(key)
-                values.append(value)
-                placeholders.append(f':{param_num}')
-                param_num += 1
-        
-        fields.append('created_ts')
-        placeholders.append('SYSDATE')
-        fields.append('modified_ts')
-        placeholders.append('SYSDATE')
+                if is_sql_func:
+                    placeholders.append(processed_value)
+                else:
+                    placeholders.append(f':{param_num}')
+                    values.append(processed_value)
+                    param_num += 1
         
         sql = f"INSERT INTO {self.TABLE_VEHICLE_MAPPING} ({', '.join(fields)}) VALUES ({', '.join(placeholders)})"
         self.execute_query(sql, values)
@@ -520,11 +527,14 @@ class FastagAcqPlugin(BasePlugin):
         param_num = 1
         for field in changes.keys():
             if field in data:
-                set_parts.append(f"{field} = :{param_num}")
-                values.append(data[field])
-                param_num += 1
+                is_sql_func, processed_value = self.process_value_for_sql(data[field])
+                if is_sql_func:
+                    set_parts.append(f"{field} = {processed_value}")
+                else:
+                    set_parts.append(f"{field} = :{param_num}")
+                    values.append(processed_value)
+                    param_num += 1
         
-        set_parts.append("modified_ts = SYSDATE")
         values.extend([plaza_id, mvc_id])
         
         sql = f"UPDATE {self.TABLE_VEHICLE_MAPPING} SET {', '.join(set_parts)} WHERE plaza_id = :{param_num} AND mvc_id = :{param_num+1}"
@@ -538,15 +548,14 @@ class FastagAcqPlugin(BasePlugin):
         param_num = 1
         for key, value in data.items():
             if key != '_table':
+                is_sql_func, processed_value = self.process_value_for_sql(value)
                 fields.append(key)
-                values.append(value)
-                placeholders.append(f':{param_num}')
-                param_num += 1
-        
-        fields.append('created_ts')
-        placeholders.append('SYSDATE')
-        fields.append('modified_ts')
-        placeholders.append('SYSDATE')
+                if is_sql_func:
+                    placeholders.append(processed_value)
+                else:
+                    placeholders.append(f':{param_num}')
+                    values.append(processed_value)
+                    param_num += 1
         
         sql = f"INSERT INTO {self.TABLE_USER_MAPPING} ({', '.join(fields)}) VALUES ({', '.join(placeholders)})"
         self.execute_query(sql, values)
@@ -558,11 +567,14 @@ class FastagAcqPlugin(BasePlugin):
         param_num = 1
         for field in changes.keys():
             if field in data:
-                set_parts.append(f"{field} = :{param_num}")
-                values.append(data[field])
-                param_num += 1
+                is_sql_func, processed_value = self.process_value_for_sql(data[field])
+                if is_sql_func:
+                    set_parts.append(f"{field} = {processed_value}")
+                else:
+                    set_parts.append(f"{field} = :{param_num}")
+                    values.append(processed_value)
+                    param_num += 1
         
-        set_parts.append("modified_ts = SYSDATE")
         values.append(user_id)
         
         sql = f"UPDATE {self.TABLE_USER_MAPPING} SET {', '.join(set_parts)} WHERE user_id = :{param_num}"

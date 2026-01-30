@@ -1,7 +1,9 @@
 import oracledb
 import logging
-from typing import Dict, Optional, List
+import re
+from typing import Dict, Optional, List, Tuple
 from .VaultClient import VaultClient
+from .Constants import SqlProcessing
 
 
 class BasePlugin:
@@ -44,11 +46,28 @@ class BasePlugin:
         conn.rollback()
         logging.debug("Transaction rolled back")
     
+    def process_value_for_sql(self, value) -> Tuple[bool, any]:
+        if not isinstance(value, str):
+            return (False, value)
+        
+        value_stripped = value.strip()
+        value_upper = value_stripped.upper()
+        
+        if value_upper in SqlProcessing.SQL_KEYWORDS:
+            return (True, value_upper)
+        
+        for pattern, oracle_format in SqlProcessing.DATE_PATTERNS:
+            if re.match(pattern, value_stripped):
+                return (True, f"TO_DATE('{value_stripped}', '{oracle_format}')")
+        
+        return (False, value)
+    
     def execute_query(self, sql: str, params: Optional[tuple] = None, fetch_one: bool = False):
-        self.sql_queries.append({
-            'sql': sql,
-            'params': params or []
-        })
+        if sql.strip().upper().startswith(('INSERT', 'UPDATE')):
+            self.sql_queries.append({
+                'sql': sql,
+                'params': params or []
+            })
         
         conn = self.get_db_connection()
         cursor = conn.cursor()

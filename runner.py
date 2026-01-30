@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
-from utils.Formatting import get_separator, get_log_formatter
+from utils.Formatting import get_separator, get_log_formatter, format_sql
 from common.Constants import FilePatterns, Directories
 
 
@@ -420,6 +420,10 @@ class QueryRunner:
     
     def save_sql_queries(self, csv_filename: str, jira_queries: dict):
         for jira, queries in jira_queries.items():
+            if not queries:
+                logging.debug(f"No queries to save for {jira}")
+                continue
+            
             sql_filename = f"{csv_filename}_{jira}.sql"
             sql_filepath = self.sql_dir / sql_filename
             
@@ -434,7 +438,7 @@ class QueryRunner:
                         sql = query_info['sql']
                         params = query_info['params']
                         
-                        formatted_sql = format_sql_with_values(sql, params)
+                        formatted_sql = format_sql(sql, params)
                         
                         f.write(f"-- Query {idx}\n")
                         f.write(f"{formatted_sql};\n\n")

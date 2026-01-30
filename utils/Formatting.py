@@ -1,6 +1,7 @@
 import shutil
 import logging
 import sys
+import re
 from common.Constants import Formatting as FormattingConstants
 
 def get_separator(char="="):
@@ -35,3 +36,27 @@ def get_log_formatter():
         '[%(asctime)s] [%(filename)s:%(lineno)d] [%(funcName)s()] [%(levelname)s] %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
+    
+def format_sql(sql: str, params: list) -> str:
+    if not params:
+        return sql
+    
+    formatted_sql = sql
+    
+    for i, value in enumerate(params, start=1):
+        placeholder_pattern = rf':{i}(?!\d)'
+        
+        if value is None:
+            formatted_value = 'NULL'
+        elif isinstance(value, str):
+            escaped_value = value.replace("'", "''")
+            formatted_value = f"'{escaped_value}'"
+        elif isinstance(value, (int, float)):
+            formatted_value = str(value)
+        else:
+            formatted_value = f"'{str(value)}'"
+        
+        formatted_sql = re.sub(placeholder_pattern, formatted_value, formatted_sql)
+    
+    return formatted_sql
+

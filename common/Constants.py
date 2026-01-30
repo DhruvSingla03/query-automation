@@ -29,3 +29,14 @@ class Formatting:
     MAX_LOG_PREFIX_WIDTH = 90
     TIMESTAMP_WIDTH = 23
     LEVEL_WIDTH = 12
+
+class SqlProcessing:
+    SQL_KEYWORDS = ['SYSDATE', 'SYSTIMESTAMP']
+    
+    DATE_PATTERNS = [
+        (r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$', 'YYYY-MM-DD HH24:MI:SS'),
+        (r'^\d{2}-\d{2}-\d{4} \d{2}:\d{2}:\d{2}$', 'DD-MM-YYYY HH24:MI:SS'),
+        (r'^\d{4}-\d{2}-\d{2}$', 'YYYY-MM-DD'),
+        (r'^\d{2}-\d{2}-\d{4}$', 'DD-MM-YYYY'),
+        (r'^\d{2}/\d{2}/\d{4}$', 'DD/MM/YYYY'),
+    ]
