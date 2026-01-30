@@ -1,18 +1,24 @@
 import oracledb
 import logging
 import re
+from abc import ABC, abstractmethod
 from typing import Dict, Optional, List, Tuple
 from .VaultClient import VaultClient
 from .Constants import SqlProcessing
 
 
-class BasePlugin:
+class BasePlugin(ABC):
     
     def __init__(self, product_code: str, vault_config):
         self.product_code = product_code
         self.vault = VaultClient(vault_config)
         self._db_conn = None
         self.sql_queries = []
+    
+    def get_sftp_config(self, env: str = 'dev'):
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must implement get_sftp_config() if SFTP mode is required"
+        )
     
     def get_db_connection(self):
         if self._db_conn is None:
@@ -155,14 +161,114 @@ class BasePlugin:
         table_data = self.extract_table_data(row, prefix)
         return len(table_data) > 0
     
-    def get_mutable_fields(self, table: str) -> List[str]:
-        raise NotImplementedError("Subclass must implement get_mutable_fields()")
+    def _insert(self, table: str, data: Dict):
+        fields = []
+        values = []
+        placeholders = []
+        
+        param_num = 1
+        for key, value in data.items():
+            if key != '_table':
+                is_sql_func, processed_value = self.process_value_for_sql(value)
+                fields.append(key)
+                if is_sql_func:
+                    placeholders.append(processed_value)
+                else:
+                    placeholders.append(f':{param_num}')
+                    values.append(processed_value)
+                    param_num += 1
+        
+        sql = f"INSERT INTO {table} ({', '.join(fields)}) VALUES ({', '.join(placeholders)})"
+        self.execute_query(sql, values)
     
-    def process_row(self, row: Dict, metadata: Dict):
-        raise NotImplementedError("Subclass must implement process_row()")
+    def _update(self, table: str, pk_fields: Dict, data: Dict, changes: Dict):
+        set_parts = []
+        values = []
+        
+        param_num = 1
+        for field in changes.keys():
+            if field in data:
+                is_sql_func, processed_value = self.process_value_for_sql(data[field])
+                if is_sql_func:
+                    set_parts.append(f"{field} = {processed_value}")
+                else:
+                    set_parts.append(f"{field} = :{param_num}")
+                    values.append(processed_value)
+                    param_num += 1
+        
+        where_parts = []
+        for field, value in pk_fields.items():
+            where_parts.append(f"{field} = :{param_num}")
+            values.append(value)
+            param_num += 1
+        
+        where_clause = ' AND '.join(where_parts)
+        sql = f"UPDATE {table} SET {', '.join(set_parts)} WHERE {where_clause}"
+        self.execute_query(sql, values)
+    
+    def _process_entity(
+        self,
+        table: str,
+        prefix: str,
+        pk_fields: List[str],
+        row: Dict,
+        operation: str,
+        override: bool,
+        entity_name: str = None
+    ) -> str:
+        from .Constants import Operation, ProcessStatus
+        
+        data = self.extract_table_data(row, prefix)
+        data['_table'] = table
+        
+        for pk_field in pk_fields:
+            if not data.get(pk_field):
+                raise ValueError(f"{prefix}.{pk_field} is required")
+        
+        pk_dict = {pk_field: data[pk_field] for pk_field in pk_fields}
+        pk_values = [data[pk_field] for pk_field in pk_fields]
+        pk_display = '/'.join(pk_values)
+        
+        if entity_name is None:
+            entity_name = prefix.capitalize()
+        
+        if operation == Operation.INSERT:
+            existing = self.fetch_current_record(table, pk_dict)
+            if existing:
+                logging.warning(f"{entity_name} {pk_display} already exists, skipping INSERT")
+                return ProcessStatus.SKIPPED
+            
+            self._insert(table, data)
+            logging.info(f"Inserted {entity_name.lower()}: {pk_display}")
+            return ProcessStatus.INSERTED
+            
+        elif operation == Operation.UPDATE:
+            current = self.fetch_current_record(table, pk_dict)
+            if not current:
+                raise ValueError(f"{entity_name} {pk_display} does not exist. Use INSERT operation.")
+            
+            all_fields = list(data.keys())
+            changes = self.detect_changes(current, data, all_fields)
+            
+            if not changes:
+                logging.info(f"No changes detected for {entity_name.lower()} {pk_display}")
+                return ProcessStatus.SKIPPED
+            
+            self.validate_mutability(changes, override)
+            self._update(table, pk_dict, data, changes)
+            logging.info(f"Updated {entity_name.lower()}: {pk_display}, fields: {list(changes.keys())}")
+            return ProcessStatus.UPDATED
     
     def get_sql_queries(self) -> List[Dict]:
         return self.sql_queries
     
     def reset_sql_queries(self):
         self.sql_queries = []
+        
+    @abstractmethod
+    def get_mutable_fields(self, table: str) -> List[str]:
+        raise NotImplementedError("Subclass must implement get_mutable_fields()")
+    
+    @abstractmethod
+    def process_row(self, row: Dict, metadata: Dict):
+        raise NotImplementedError("Subclass must implement process_row()")
